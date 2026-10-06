@@ -17,8 +17,12 @@ class TieredBatchConfig implements ConfigScope {
     final int interruptionThreshold
 
     @ConfigOption
-    @Description('Ordinary failure retries before fallback. Default: 2.')
+    @Description('Application failure retries before termination. Default: 2.')
     final int ordinaryRetryAllowance
+
+    @ConfigOption
+    @Description('Transient AWS infrastructure failures per task before on-demand fallback. Default: 3.')
+    final int infrastructureFailureThreshold
 
     @ConfigOption(types = [Map])
     @Description('Mapping of Spot-only queues to on-demand-only queues.')
@@ -30,6 +34,7 @@ class TieredBatchConfig implements ConfigScope {
         enabled = options.enabled == true
         interruptionThreshold = integerOption(options, 'interruptionThreshold', 3, 1)
         ordinaryRetryAllowance = integerOption(options, 'ordinaryRetryAllowance', 2, 0)
+        infrastructureFailureThreshold = integerOption(options, 'infrastructureFailureThreshold', 3, 1)
         if (options.queueMappings != null && !(options.queueMappings instanceof Map))
             throw new IllegalArgumentException('tieredAwsBatch.queueMappings must be a map')
         Map<String, String> mappings = [:]

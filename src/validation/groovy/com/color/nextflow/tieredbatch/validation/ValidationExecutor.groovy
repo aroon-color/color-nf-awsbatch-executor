@@ -27,7 +27,9 @@ class ValidationExecutor extends TieredBatchExecutor {
     }
 
     @Override
-    String getJobOutputStream(String jobId) { return null }
+    String getJobOutputStream(String jobId) {
+        return System.getenv('TIERED_VALIDATION_SCENARIO') == 'infra-stage-out' ? api.output(jobId) : null
+    }
 
     @Override
     protected TieredBatchTaskHandler newTaskHandler(TaskRun task, String key, TieredRetryPolicy.Tier tier, String queue) {

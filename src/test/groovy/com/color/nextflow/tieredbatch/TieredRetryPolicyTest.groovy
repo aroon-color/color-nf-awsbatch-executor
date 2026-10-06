@@ -59,4 +59,40 @@ class TieredRetryPolicyTest extends Specification {
         where:
         options << [[enabled: true], [queueMappings: [spot: 'spot']], [ordinaryRetryAllowance: 1.5], [interruptionThreshold: 0]]
     }
+
+    def 'infrastructure failures have an independent budget and switch only the affected task'() {
+        given:
+        def store = new TaskRetryStateStore(config)
+        store.prepare('process:1', 'spot', 1)
+        def other = store.prepare('process:2', 'spot', 1)
+
+        when:
+        store.failed('process:1', 'job1', TieredRetryPolicy.Tier.SPOT, BatchFailureClassifier.Failure.INFRASTRUCTURE)
+        store.failed('process:1', 'job1', TieredRetryPolicy.Tier.SPOT, BatchFailureClassifier.Failure.INFRASTRUCTURE)
+        def retry = store.prepare('process:1', 'spot', 2)
+        store.failed('process:1', 'job2', TieredRetryPolicy.Tier.SPOT, BatchFailureClassifier.Failure.ORDINARY)
+        store.prepare('process:1', 'spot', 3)
+        store.failed('process:1', 'job3', TieredRetryPolicy.Tier.SPOT, BatchFailureClassifier.Failure.INTERRUPTION)
+        store.prepare('process:1', 'spot', 4)
+        store.failed('process:1', 'job4', TieredRetryPolicy.Tier.SPOT, BatchFailureClassifier.Failure.INFRASTRUCTURE)
+        store.prepare('process:1', 'spot', 5)
+        store.failed('process:1', 'job5', TieredRetryPolicy.Tier.SPOT, BatchFailureClassifier.Failure.INFRASTRUCTURE)
+        def finalAttempt = store.prepare('process:1', 'spot', 6)
+
+        then:
+        retry.infrastructureFailures == 1
+        retry.ordinaryFailures == 0
+        finalAttempt.interruptions == 1
+        finalAttempt.infrastructureFailures == 3
+        finalAttempt.ordinaryFailures == 1
+        store.policy.queue(finalAttempt) == 'demand'
+        store.policy.queue(other) == 'spot'
+
+        when:
+        store.failed('process:1', 'job6', TieredRetryPolicy.Tier.ON_DEMAND, BatchFailureClassifier.Failure.INFRASTRUCTURE)
+        store.prepare('process:1', 'spot', 7)
+
+        then:
+        thrown(ProcessUnrecoverableException)
+    }
 }

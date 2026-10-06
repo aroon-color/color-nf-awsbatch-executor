@@ -9,6 +9,7 @@ class TieredRetryPolicy {
     static class State {
         String spotQueue
         int interruptions
+        int infrastructureFailures
         int ordinaryFailures
         boolean terminal
     }
@@ -18,7 +19,7 @@ class TieredRetryPolicy {
     TieredRetryPolicy(TieredBatchConfig config) { this.config = config }
 
     Tier tier(State state) {
-        return state.interruptions >= config.interruptionThreshold ? Tier.ON_DEMAND : Tier.SPOT
+        return (state.interruptions >= config.interruptionThreshold || state.infrastructureFailures >= config.infrastructureFailureThreshold) ? Tier.ON_DEMAND : Tier.SPOT
     }
 
     String queue(State state) {
@@ -29,10 +30,12 @@ class TieredRetryPolicy {
         if (state.terminal)
             return state
         if (submittedTier == Tier.ON_DEMAND || failure == BatchFailureClassifier.Failure.UNRECOVERABLE)
-            return new State(state.spotQueue, state.interruptions, state.ordinaryFailures, true)
+            return new State(state.spotQueue, state.interruptions, state.infrastructureFailures, state.ordinaryFailures, true)
         if (failure == BatchFailureClassifier.Failure.INTERRUPTION)
-            return new State(state.spotQueue, state.interruptions + 1, state.ordinaryFailures, false)
+            return new State(state.spotQueue, state.interruptions + 1, state.infrastructureFailures, state.ordinaryFailures, false)
+        if (failure == BatchFailureClassifier.Failure.INFRASTRUCTURE)
+            return new State(state.spotQueue, state.interruptions, state.infrastructureFailures + 1, state.ordinaryFailures, false)
         int failures = state.ordinaryFailures + 1
-        return new State(state.spotQueue, state.interruptions, failures, failures > config.ordinaryRetryAllowance)
+        return new State(state.spotQueue, state.interruptions, state.infrastructureFailures, failures, failures > config.ordinaryRetryAllowance)
     }
 }

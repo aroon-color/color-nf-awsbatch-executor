@@ -34,8 +34,8 @@ class TieredBatchExecutor extends AwsBatchExecutor {
         def strategy = task.config.getRawValue('errorStrategy')
         if (strategy?.toString() != 'retry')
             throw new ProcessUnrecoverableException('tiered-awsbatch requires static errorStrategy = retry; remove process-specific overrides')
-        if (task.config.maxRetries < tieredConfig.interruptionThreshold + tieredConfig.ordinaryRetryAllowance || task.config.maxErrors != -1)
-            throw new ProcessUnrecoverableException('tiered-awsbatch requires maxErrors = -1 and maxRetries >= interruptionThreshold + ordinaryRetryAllowance')
+        if (task.config.maxRetries < tieredConfig.interruptionThreshold + tieredConfig.infrastructureFailureThreshold + tieredConfig.ordinaryRetryAllowance || task.config.maxErrors != -1)
+            throw new ProcessUnrecoverableException('tiered-awsbatch requires maxErrors = -1 and maxRetries >= interruptionThreshold + infrastructureFailureThreshold + ordinaryRetryAllowance')
         if (task.getContainer()?.startsWith('job-definition://'))
             throw new ProcessUnrecoverableException('tiered-awsbatch requires a Docker image; pre-existing job definitions are unsupported')
         String key = "${task.processor.name}:${task.index}"

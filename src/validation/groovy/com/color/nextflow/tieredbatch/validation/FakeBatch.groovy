@@ -9,9 +9,12 @@ import software.amazon.awssdk.services.batch.model.*
 class FakeBatch {
     private final Map<String, TaskRun> tasks = [:]
     private final Map<String, JobDetail> jobs = [:]
+    private final Map<String, String> outputs = [:]
     private int sequence
 
     synchronized void bind(String jobName, TaskRun task) { tasks.put(jobName, task) }
+
+    synchronized String output(String jobId) { return outputs.get(jobId) }
 
     BatchClient client() {
         return Proxy.newProxyInstance(BatchClient.classLoader, [BatchClient] as Class[], { proxy, method, arguments ->
@@ -55,8 +58,32 @@ class FakeBatch {
             interrupted = attempt == 1
         if (scenario == 'final-host' && onDemand)
             interrupted = true
-        int exitCode = interrupted ? 143 : ordinary || (scenario == 'final-failure' && onDemand) ? 1 : 0
+        boolean infrastructure = taskA && scenario.startsWith('infra-') && !onDemand
+        if (scenario.startsWith('infra-')) {
+            interrupted = false
+            ordinary = scenario == 'infra-permanent' && taskA
+            infrastructure = infrastructure && !ordinary
+        }
+        if (scenario == 'infra-mixed' && taskA && !onDemand) {
+            ordinary = attempt == 2
+            interrupted = attempt == 3
+            infrastructure = !ordinary && !interrupted
+        }
+        if (scenario == 'infra-final' && taskA && onDemand)
+            infrastructure = true
+        int exitCode = infrastructure ? 1 : interrupted ? 143 : ordinary || (scenario == 'final-failure' && onDemand) ? 1 : 0
         String reason = interrupted ? 'Host EC2 (instance i-fixture) terminated.' : exitCode ? 'Essential container in task exited' : ''
+        if (infrastructure || (scenario == 'infra-permanent' && taskA)) {
+            String message = scenario == 'infra-stage-out' ?
+                'upload failed: ./result.txt to s3://fixture/result.txt Read timeout on endpoint URL' :
+                scenario == 'infra-permanent' ? 'download failed: s3://fixture/input to ./input AccessDenied: Access Denied' :
+                "download failed: s3://fixture/reference.fa to ./reference.fa ConnectionResetError(104, 'Connection reset by peer')"
+            outputs.put(jobId, message)
+            if (scenario == 'infra-stage-out')
+                task.workDir.resolve('.exitcode').toFile().text = '0'
+            task.workDir.resolve('.command.err').toFile().text = ('worker output\n' * 6000) + message
+            task.workDir.resolve('.command.log').toFile().text = ('worker output\n' * 6000) + message
+        }
         if (!exitCode && !(scenario == 'missing-output' && onDemand)) {
             def process = new ProcessBuilder('bash', '.command.sh').directory(task.workDir.toFile())
                 .redirectOutput(task.workDir.resolve('.command.out').toFile()).redirectError(task.workDir.resolve('.command.err').toFile()).start()

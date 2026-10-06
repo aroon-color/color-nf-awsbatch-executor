@@ -12,7 +12,7 @@ if ! "$nextflow_bin" -version | grep -q 'version 26.04.1 '; then
 fi
 cd "$plugin_root"
 ./gradlew test installValidationPlugin installAmazonPlugin
-for scenario in success isolation ordinary-first final-failure final-host missing-output lost-response ordinary-only; do
+for scenario in success isolation ordinary-first final-failure final-host missing-output lost-response ordinary-only infra-stage-in infra-stage-out infra-mixed infra-final infra-permanent; do
     run_dir="$plugin_root/build/validation/$scenario"
     mkdir -p "$run_dir"
     export TIERED_VALIDATION_SCENARIO="$scenario"
@@ -24,7 +24,7 @@ for scenario in success isolation ordinary-first final-failure final-host missin
         "$nextflow_bin" -C "$plugin_root/validation/nextflow.config" run "$plugin_root/validation/main.nf" -ansi-log false -w "$run_dir/work"
     ) > "$run_dir/run.log" 2>&1 || exit_status=$?
     case "$scenario" in
-        success|isolation|ordinary-first)
+        success|isolation|ordinary-first|infra-stage-in|infra-stage-out|infra-mixed)
             if [ "$exit_status" -ne 0 ]; then cat "$run_dir/run.log"; exit 1; fi
             ;;
         *)
@@ -36,7 +36,8 @@ for scenario in success isolation ordinary-first final-failure final-host missin
     case "$scenario" in
         ordinary-first) expected='fixture-spot,fixture-spot,fixture-spot,fixture-spot,fixture-demand' ;;
         lost-response) expected='fixture-spot' ;;
-        ordinary-only) expected='fixture-spot,fixture-spot,fixture-spot' ;;
+        ordinary-only|infra-permanent) expected='fixture-spot,fixture-spot,fixture-spot' ;;
+        infra-mixed) expected='fixture-spot,fixture-spot,fixture-spot,fixture-spot,fixture-spot,fixture-demand' ;;
     esac
     if [ "$actual" != "$expected" ]; then
         echo "$scenario: expected $expected; observed $actual" >&2
@@ -57,6 +58,12 @@ for scenario in success isolation ordinary-first final-failure final-host missin
     if grep -q 'WARN: Unrecognized config option' "$run_dir/run.log"; then
         cat "$run_dir/run.log"
         exit 1
+    fi
+    if [[ "$scenario" == infra-* && "$scenario" != infra-permanent ]]; then
+        if ! grep -q 'classification=INFRASTRUCTURE;.*infrastructureFailures=3;' "$run_dir/.nextflow.log"; then
+            echo "$scenario: missing independent infrastructure threshold" >&2
+            exit 1
+        fi
     fi
     printf '%s: %s (exit %s)\n' "$scenario" "$actual" "$exit_status"
 done

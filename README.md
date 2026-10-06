@@ -6,7 +6,8 @@ This repository builds the Nextflow plugin `nf-tiered-awsbatch`.
 
 Nextflow executor `tiered-awsbatch` extends `nf-amazon` and counts host interruption
 failures separately for each logical task. After three such failures on a Spot-only
-queue, it submits one final execution on the mapped on-demand-only queue. A failed
+queue, or after three recognized transient AWS infrastructure failures, it submits
+one final execution on the mapped on-demand-only queue. A failed
 final execution terminates the workflow, including failures detected by Nextflow
 after Batch succeeds (for example, missing outputs).
 
@@ -35,7 +36,7 @@ installed `nf-amazon` plugin through its declared plugin dependency.
 ```groovy
 plugins {
     id 'nf-amazon@3.9.1'
-    id 'nf-tiered-awsbatch@0.1.0'
+    id 'nf-tiered-awsbatch@0.2.0'
 }
 
 process {
@@ -43,13 +44,14 @@ process {
     container = 'ubuntu:24.04'
     queue = 'analysis-spot'
     errorStrategy = 'retry'
-    maxRetries = 5
+    maxRetries = 8
     maxErrors = -1
 }
 
 tieredAwsBatch {
     enabled = true
     interruptionThreshold = 3
+    infrastructureFailureThreshold = 3
     ordinaryRetryAllowance = 2
     queueMappings = ['analysis-spot': 'analysis-on-demand']
 }
@@ -68,7 +70,7 @@ memory/CPU, container image, roles, network, and volume requirements; no capacit
 permission guarantee is inferred from the queue being enabled.
 
 Use static `errorStrategy = 'retry'`, `maxErrors = -1`, and a core retry ceiling at
-least `interruptionThreshold + ordinaryRetryAllowance`. Incompatible per-process
+least `interruptionThreshold + infrastructureFailureThreshold + ordinaryRetryAllowance`. Incompatible per-process
 overrides fail clearly rather than silently defeating the policy. The final attempt
 receives task-level `errorStrategy = 'terminate'`; Nextflow 26.04.1 interprets zero
 maxRetries as one, so zero is not used as a retry guard.
@@ -79,6 +81,35 @@ produce more than three Spot submissions. Host EC2 termination reasons on verifi
 Spot-only queues are the classifier evidence, matching upstream AWS retry practice.
 This does not independently distinguish reclaim notifications from every other host
 termination. Codes 137/143 alone never trigger fallback.
+
+Transient infrastructure failures have a separate counter. Three recognized failures
+route the affected task to its final on-demand execution without consuming application
+retries or the Spot interruption counter. The default threshold is configurable with
+`infrastructureFailureThreshold`. Final on-demand failures remain terminal, including
+another infrastructure failure.
+
+Classification uses explicit AWS CLI S3 transfer failures plus transient evidence
+(connection resets, endpoint timeouts, throttling, or service errors). It also
+recognizes transient container image-pull and resource-initialization failures.
+Access-denied, missing-object, image authorization, and generic application errors
+are not infrastructure failures. Exit codes alone are insufficient. Worker diagnostics
+come from upstream CloudWatch output or the last 64 KiB of staged stderr/wrapper logs.
+Unavailable diagnostics retain the ordinary classification; no log heuristic can
+identify an infrastructure failure whose evidence was never persisted.
+
+For S3-backed runs, also configure upstream transfer retries so brief outages do not
+require a new task:
+
+```groovy
+aws.batch.maxTransferAttempts = 5
+aws.batch.delayBetweenAttempts = '30 sec'
+aws.batch.maxParallelTransfers = 2
+aws.batch.retryMode = 'standard'
+```
+
+These retries apply to worker staging. Nextflow leader-side `publishDir` failures,
+control-plane polling, and ambiguous SubmitJob outcomes are not reclassified by this
+policy; ambiguous submissions remain terminal to avoid duplicate jobs.
 
 ## Supported scope and resume
 
@@ -106,8 +137,8 @@ NEXTFLOW_BIN=/absolute/path/to/nextflow ./scripts/verify.sh
 NEXTFLOW_BIN=/absolute/path/to/nextflow ./scripts/verify-extraction.sh
 ```
 
-Verification loads a separate test-only plugin that replaces the external AWS
-boundary, runs real Nextflow scheduling/retries/output validation, and asserts queue
+Verification overlays test-only executor classes into an isolated plugin home to
+replace the external AWS boundary, runs real Nextflow scheduling/retries/output validation, and asserts queue
 sequences, tags, resources, final failures, isolation, and cache behavior. Production
 archives never contain this fixture or its executor. SDK submission tests use a
 local HTTP server to prove that a retrying client sends SubmitJob only once.
