@@ -1,0 +1,5 @@
+The Gradle wrapper is derived from the official Nextflow plugin template
+(https://github.com/nextflow-io/nf-plugin-template), Apache License 2.0.
+The plugin extends, but does not redistribute in its production archive, nf-amazon
+3.9.1 and Nextflow 26.04.1, Copyright Seqera Labs, Apache License 2.0.
+See licenses/Apache-2.0.txt for the upstream license. Preserve upstream headers.

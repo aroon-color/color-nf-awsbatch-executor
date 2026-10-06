@@ -1,0 +1,6 @@
+.gradle/
+build/
+.nextflow*
+work/
+
+!gradle/wrapper/gradle-wrapper.jar

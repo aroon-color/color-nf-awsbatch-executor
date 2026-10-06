@@ -1,0 +1,90 @@
+plugins {
+    id 'io.nextflow.nextflow-plugin' version '1.0.0-beta.15'
+}
+
+version = '0.1.0'
+
+nextflowPlugin {
+    nextflowVersion = '26.04.1'
+    provider = 'Color'
+    description = 'Per-task AWS Batch Spot interruption retries with a final on-demand attempt'
+    className = 'com.color.nextflow.tieredbatch.TieredBatchPlugin'
+    requirePlugins = ['nf-amazon@3.9.1']
+    extensionPoints = ['com.color.nextflow.tieredbatch.TieredBatchExecutor', 'com.color.nextflow.tieredbatch.TieredBatchConfig']
+}
+
+def amazonArchive = layout.buildDirectory.file('upstream/nf-amazon-3.9.1.zip')
+def amazonDirectory = layout.buildDirectory.dir('upstream/nf-amazon-3.9.1')
+tasks.register('downloadAmazon') {
+    outputs.file(amazonArchive)
+    doLast {
+        def target = amazonArchive.get().asFile
+        target.parentFile.mkdirs()
+        def tokenUrl = new URI('https://auth.cr.seqera.io/auth/token?service=public.cr.seqera.io&scope=repository%3Anextflow%2Fplugin%2Fnf-amazon%3Apull').toURL()
+        def token = new groovy.json.JsonSlurper().parse(tokenUrl).token
+        def connection = new URI('https://public.cr.seqera.io/v2/nextflow/plugin/nf-amazon/blobs/sha256:6012c1a9c1fa6ff2e4488c22f2756129aad1d4b47e83d5a390d008e1796f4d08').toURL().openConnection()
+        connection.setRequestProperty('Authorization', "Bearer ${token}")
+        connection.inputStream.withCloseable { input ->
+            target.withOutputStream { output -> output << input }
+        }
+        def actual = java.security.MessageDigest.getInstance('SHA-512').digest(target.bytes).encodeHex().toString()
+        if (actual != 'aa919ee7c09145cb32a99d7b1c4b9c4d23257e121c87b6143ac9f76fcaf5148c9dabbf41598c04edf4286c8f2b903c0b30ac20c9cdf96b113e4aa4eab71cd824') {
+            target.delete()
+            throw new GradleException('nf-amazon archive checksum mismatch')
+        }
+    }
+}
+tasks.register('unpackAmazon', Sync) {
+    dependsOn 'downloadAmazon'
+    from { zipTree(amazonArchive.get().asFile) }
+    into amazonDirectory
+}
+dependencies {
+    compileOnly files(amazonDirectory.map { it.dir('classes') })
+    compileOnly fileTree(amazonDirectory.map { it.dir('lib') }) { include '*.jar' }
+    testImplementation files(amazonDirectory.map { it.dir('classes') })
+    testImplementation fileTree(amazonDirectory.map { it.dir('lib') }) { include '*.jar' }
+}
+tasks.named('compileGroovy') { dependsOn 'unpackAmazon' }
+tasks.named('compileTestGroovy') { dependsOn 'unpackAmazon' }
+tasks.named('test') { useJUnitPlatform() }
+
+sourceSets {
+    validation {
+        compileClasspath += sourceSets.main.output
+        runtimeClasspath += sourceSets.main.output
+    }
+}
+configurations {
+    validationImplementation.extendsFrom testImplementation
+    validationRuntimeOnly.extendsFrom testRuntimeOnly
+}
+tasks.named('compileValidationGroovy') { dependsOn 'unpackAmazon', 'extensionPoints', 'generateSpec' }
+tasks.register('installValidationPlugin', Sync) {
+    dependsOn 'validationClasses', 'installPlugin'
+    def home = System.getenv('NXF_HOME') ?: layout.buildDirectory.dir('validation-home').get().asFile.path
+    into "${home}/plugins/nf-tiered-awsbatch-validation-0.1.0/classes"
+    from sourceSets.validation.output
+    doLast {
+        def metadata = new File(destinationDir, 'META-INF')
+        metadata.mkdirs()
+        new File(metadata, 'MANIFEST.MF').text = '''Manifest-Version: 1.0
+Plugin-Id: nf-tiered-awsbatch-validation
+Plugin-Version: 0.1.0
+Plugin-Requires: >=26.04.1
+Plugin-Class: com.color.nextflow.tieredbatch.validation.ValidationPlugin
+Plugin-Dependencies: nf-tiered-awsbatch@0.1.0,nf-amazon@3.9.1
+Plugin-Provider: Color
+
+'''
+        new File(metadata, 'extensions.idx').text = 'com.color.nextflow.tieredbatch.validation.ValidationExecutor\n'
+    }
+}
+
+// Install the verified upstream dependency alongside the compiled executor for images.
+tasks.register('installAmazonPlugin', Sync) {
+    dependsOn 'unpackAmazon'
+    def home = System.getenv('NXF_HOME') ?: "${System.getProperty('user.home')}/.nextflow"
+    from amazonDirectory
+    into "${home}/plugins/nf-amazon-3.9.1"
+}

@@ -1,0 +1,30 @@
+name: Verify tiered Batch executor
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Install Java 21 and Nextflow 26.04.1
+        run: |
+          curl --proto =https --tlsv1.2 --retry 5 -fsSL \
+            https://download.java.net/java/GA/jdk21.0.1/415e3f918a1f4062a0074a2794853d0d/12/GPL/openjdk-21.0.1_linux-x64_bin.tar.gz \
+            -o "$RUNNER_TEMP/java.tar.gz"
+          mkdir -p "$RUNNER_TEMP/java"
+          tar -xzf "$RUNNER_TEMP/java.tar.gz" -C "$RUNNER_TEMP/java" --strip-components=1
+          curl --proto =https --tlsv1.2 --retry 5 -fsSL \
+            https://github.com/nextflow-io/nextflow/releases/download/v26.04.1/nextflow-26.04.1-dist \
+            -o "$RUNNER_TEMP/nextflow"
+          chmod +x "$RUNNER_TEMP/nextflow"
+          echo "JAVA_HOME=$RUNNER_TEMP/java" >> "$GITHUB_ENV"
+          echo "NEXTFLOW_BIN=$RUNNER_TEMP/nextflow" >> "$GITHUB_ENV"
+      - name: Verify retry policy and standalone extraction
+        run: |
+          ./scripts/verify.sh
+          ./scripts/verify-extraction.sh
