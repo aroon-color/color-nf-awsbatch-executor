@@ -9,6 +9,10 @@ import nextflow.script.dsl.Description
 @Description('AWS Batch retries on Spot with one final on-demand execution.')
 class TieredBatchConfig implements ConfigScope {
     @ConfigOption
+    @Description('Write attempt ledger and estimated compute summary for either AWS Batch executor. Default: false.')
+    final boolean reporting
+
+    @ConfigOption
     @Description('Enable the tiered executor. Default: false.')
     final boolean enabled
 
@@ -31,6 +35,7 @@ class TieredBatchConfig implements ConfigScope {
     TieredBatchConfig() { this([:]) }
 
     TieredBatchConfig(Map options) {
+        reporting = options.reporting == true
         enabled = options.enabled == true
         interruptionThreshold = integerOption(options, 'interruptionThreshold', 3, 1)
         ordinaryRetryAllowance = integerOption(options, 'ordinaryRetryAllowance', 2, 0)

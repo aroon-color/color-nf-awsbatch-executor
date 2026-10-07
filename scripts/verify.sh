@@ -31,6 +31,18 @@ for scenario in success isolation ordinary-first final-failure final-host missin
             if [ "$exit_status" -eq 0 ]; then echo "$scenario unexpectedly succeeded" >&2; exit 1; fi
             ;;
     esac
+    python3 - "$run_dir/tiered-batch-summary.json" "$scenario" <<'PYTEST'
+import json, sys
+with open(sys.argv[1]) as source: summary = json.load(source)
+assert summary['complete'] is True, summary
+if sys.argv[2] == 'success':
+    assert summary['spotInterruptions'] == 3, summary
+    assert summary['spotRetries'] == 2, summary
+    assert summary['onDemandFallbacks'] == 1, summary
+    assert summary['spotInstances'] == 1 and summary['onDemandInstances'] == 1, summary
+    assert summary['estimatedCostUsd'] == 0.0675, summary
+    assert summary['pricedAttempts'] == 5, summary
+PYTEST
     actual=$(awk -F '\t' '$1 == "taskA" { print $2 }' "$TIERED_VALIDATION_EVENTS" | paste -sd, -)
     expected='fixture-spot,fixture-spot,fixture-spot,fixture-demand'
     case "$scenario" in
@@ -80,4 +92,31 @@ if [ -s "$TIERED_VALIDATION_EVENTS" ]; then
     echo 'Cached tasks submitted new backend jobs on resume' >&2
     exit 1
 fi
-echo 'resume: no submissions for cached successful tasks'
+python3 - "$plugin_root/build/validation/success/tiered-batch-summary.json" <<'PYTEST'
+import json, sys
+with open(sys.argv[1]) as source: summary = json.load(source)
+assert summary['attempts'] == 0 and summary['estimatedCostUsd'] == 0, summary
+PYTEST
+echo 'resume: no submissions or new compute cost for cached successful tasks'
+
+# Reporting-only mode retains upstream AWS Batch scheduling and never uses a demand queue.
+run_dir="$plugin_root/build/validation/builtin"
+mkdir -p "$run_dir"
+export TIERED_VALIDATION_SCENARIO=success
+export TIERED_VALIDATION_EVENTS="$run_dir/events.tsv"
+: > "$TIERED_VALIDATION_EVENTS"
+sed -e "s/tiered-awsbatch-validation/awsbatch-validation/" -e "s/enabled = true/enabled = false/" "$plugin_root/validation/nextflow.config" > "$run_dir/base.config"
+# Turn reporting back on after changing executor/policy flags.
+printf '\ntieredAwsBatch.reporting = true\naws.batch.maxSpotAttempts = 1\n' >> "$run_dir/base.config"
+(
+    cd "$run_dir"
+    "$nextflow_bin" -C "$run_dir/base.config" run "$plugin_root/validation/main.nf" -ansi-log false -w "$run_dir/work"
+) > "$run_dir/run.log" 2>&1
+python3 - "$run_dir/tiered-batch-summary.json" <<'PYTEST'
+import json, sys
+with open(sys.argv[1]) as source: summary = json.load(source)
+assert summary['spotInterruptions'] == 3 and summary['spotRetries'] == 3, summary
+assert summary['onDemandAttempts'] == 0 and summary['onDemandFallbacks'] == 0, summary
+assert summary['estimatedCostUsd'] == 0.046875, summary
+PYTEST
+echo 'builtin: reporting enabled; five Spot attempts, no on-demand fallback'

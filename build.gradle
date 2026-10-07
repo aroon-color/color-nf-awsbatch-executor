@@ -2,7 +2,7 @@ plugins {
     id 'io.nextflow.nextflow-plugin' version '1.0.0-beta.15'
 }
 
-version = '0.2.0'
+version = '0.3.0'
 
 nextflowPlugin {
     nextflowVersion = '26.04.1'
@@ -10,7 +10,7 @@ nextflowPlugin {
     description = 'Per-task AWS Batch Spot interruption retries with a final on-demand attempt'
     className = 'com.color.nextflow.tieredbatch.TieredBatchPlugin'
     requirePlugins = ['nf-amazon@3.9.1']
-    extensionPoints = ['com.color.nextflow.tieredbatch.TieredBatchExecutor', 'com.color.nextflow.tieredbatch.TieredBatchConfig']
+    extensionPoints = ['com.color.nextflow.tieredbatch.TieredBatchExecutor', 'com.color.nextflow.tieredbatch.TieredBatchConfig', 'com.color.nextflow.tieredbatch.BatchReportingFactory']
 }
 
 def amazonArchive = layout.buildDirectory.file('upstream/nf-amazon-3.9.1.zip')
@@ -40,6 +40,7 @@ tasks.register('unpackAmazon', Sync) {
     into amazonDirectory
 }
 dependencies {
+    implementation('software.amazon.awssdk:pricing:2.44.3') { transitive = false }
     compileOnly files(amazonDirectory.map { it.dir('classes') })
     compileOnly fileTree(amazonDirectory.map { it.dir('lib') }) { include '*.jar' }
     testImplementation files(amazonDirectory.map { it.dir('classes') })
@@ -70,6 +71,8 @@ tasks.register('installValidationPlugin', Copy) {
     doLast {
         def index = new File(destinationDir, 'META-INF/extensions.idx')
         def extension = 'com.color.nextflow.tieredbatch.validation.ValidationExecutor'
+        index.text = index.text.replace('com.color.nextflow.tieredbatch.BatchReportingFactory', 'com.color.nextflow.tieredbatch.validation.ValidationReportingFactory')
+        index.append('com.color.nextflow.tieredbatch.validation.ValidationAwsExecutor\n')
         if (!index.readLines().contains(extension))
             index.append("${extension}\n")
     }

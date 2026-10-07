@@ -1,6 +1,6 @@
 # Compatibility and validation record
 
-Validated locally on 2026-10-06 with Nextflow **26.04.1**, nf-amazon **3.9.1**,
+Validated locally on 2026-10-07 with Nextflow **26.04.1**, nf-amazon **3.9.1**,
 Java **21.0.1**, Gradle **8.14**, and the Nextflow Gradle plugin **1.0.0-beta.15**.
 These versions are the supported baseline.
 
@@ -65,7 +65,7 @@ batch:DescribeJobQueues and batch:DescribeComputeEnvironments.
 
 ## Infrastructure retry update (0.2.0)
 
-The integration run `integration-test-V2026-10-06-14-19-03` showed AWS CLI S3
+The integration run `integration-test-V2026-10-07-14-19-03` showed AWS CLI S3
 `download failed` diagnostics containing `ConnectionResetError(104, 'Connection reset
 by peer')`, while Batch reported only `Essential container in task exited`. These
 failures previously consumed the application allowance. Version 0.2.0 recognizes
@@ -100,3 +100,11 @@ nf-amazon dependency. The original standalone Linux CI verification passed. V1 r
 pre-existing job definitions, and multi-container/multi-node overrides. New resumed
 launches reset unfinished-task budgets. Host EC2 termination reasons on verified
 Spot-only queues are evidence, not independent proof of an EC2 reclaim notification.
+
+Reporting validation additionally covers deduplicated attempt snapshots, three interruptions vs
+two Spot retries, distinct shared hosts, memory/CPU allocation, unknown prices, per-host/task
+cost sums, failed workflow summaries, zero incremental cost on cached resume, and upstream AWS
+Batch reporting without tiered scheduling. EC2/ECS/pricing SDK request tests use deterministic
+external responses; real Nextflow fixtures use explicit one-hour attempts and host/rate metadata.
+The production package includes only the Pricing SDK module and resolves shared SDK classes from
+nf-amazon, avoiding duplicate classloaders. AWS account billing reconciliation is not performed.

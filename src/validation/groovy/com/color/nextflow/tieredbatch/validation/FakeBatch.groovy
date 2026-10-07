@@ -93,7 +93,7 @@ class FakeBatch {
             task.workDir.resolve('.exitcode').toFile().text = '0'
         def container = ContainerDetail.builder().exitCode(exitCode).build()
         jobs.put(jobId, JobDetail.builder().jobId(jobId).jobName(request.jobName()).jobQueue(request.jobQueue())
-            .status(exitCode ? 'FAILED' : 'SUCCEEDED').statusReason(reason).container(container)
+            .startedAt(1000L).stoppedAt(3601000L).status(exitCode ? 'FAILED' : 'SUCCEEDED').statusReason(reason).container(container)
             .attempts(AttemptDetail.builder().statusReason(reason).container(AttemptContainerDetail.builder().exitCode(exitCode).build()).build()).build())
         def resources = request.containerOverrides().resourceRequirements().collect { "${it.typeAsString()}=${it.value()}" }.sort().join(',')
         new File(System.getenv('TIERED_VALIDATION_EVENTS')).append("${task.processor.name}\t${request.jobQueue()}\t${jobId}\t${request.retryStrategy().attempts()}\t${request.tags().get('job-queue')}\t${resources}\n")

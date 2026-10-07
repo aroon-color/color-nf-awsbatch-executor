@@ -36,7 +36,7 @@ installed `nf-amazon` plugin through its declared plugin dependency.
 ```groovy
 plugins {
     id 'nf-amazon@3.9.1'
-    id 'nf-tiered-awsbatch@0.2.0'
+    id 'nf-tiered-awsbatch@0.3.0'
 }
 
 process {
@@ -50,6 +50,7 @@ process {
 
 tieredAwsBatch {
     enabled = true
+    reporting = true
     interruptionThreshold = 3
     infrastructureFailureThreshold = 3
     ordinaryRetryAllowance = 2
@@ -166,3 +167,42 @@ for future launches; do not migrate active jobs as part of rollback.
 Original Color code retains its internal proprietary rights. See LICENSE and NOTICE
 for third-party provenance. Public source availability does not grant an open-source redistribution license.
 No plugin registry publication is included.
+
+## Usage and compute cost reporting
+
+Set `tieredAwsBatch.reporting = true` to write reports in the launch working directory.
+Reporting also works with `process.executor = 'awsbatch'` and `tieredAwsBatch.enabled = false`;
+loading this plugin does not change the upstream executor's retry policy. Reporting is opt-in
+and independent of queue validation. The plugin contains no Slack or Color dependencies.
+
+`tiered-batch-attempts.jsonl` is an append-only stream of upsert snapshots. Deduplicate by
+`launchId`, `jobId`, and `backendAttempt` when consuming it. It records logical process/index,
+Nextflow attempt, Batch job/attempt, queue/region, ECS and EC2 identity, market, timestamps,
+requested resources, failure classification, observed rate, and estimated allocated cost.
+It contains no command, environment, output, or failure diagnostic content.
+`tiered-batch-summary.json` aggregates attempts, interruptions, actual Spot resubmissions,
+infrastructure/application retries, on-demand executions/fallbacks, distinct hosts, tier runtimes,
+and estimated compute cost per logical task, EC2 host, and launch. Three interruptions normally
+mean two Spot resubmissions and one on-demand fallback. Built-in Batch retries are counted too.
+
+Each attempt costs runtime hours × observed Linux hourly rate ×
+`min(1, mean(requested vCPU / host vCPU, requested memory / host memory))`.
+Spot uses the effective AZ price at attempt start; on-demand uses the current public Linux
+shared-tenancy rate. This is an allocation estimate, not billed EC2 cost. It excludes idle host
+capacity, leader, storage, network, discounts and billing minimums. It does not charge each small
+task an entire shared host. The JSON identifies priced/unidentified attempts; unavailable prices
+remain null rather than zero. Cached tasks spend zero new compute. A resume gets a new launch ID
+and retains the Nextflow session ID for later reconciliation; sum archived launches for cumulative
+workflow estimates. Do not merge them by session ID alone.
+
+The leader role needs these read-only permissions (in addition to normal executor permissions):
+`batch:DescribeJobs`, `ecs:DescribeContainerInstances`, `ec2:DescribeInstances`,
+`ec2:DescribeInstanceTypes`, `ec2:DescribeSpotPriceHistory`, and `pricing:GetProducts`.
+Pricing requests use us-east-1 while compute metadata uses `aws.region` and the same Nextflow
+credential provider. Metadata is captured at task start to preserve identities before interruption,
+with another snapshot at completion. Read requests have five-second timeouts and run on a separate
+worker. Reports are checkpointed during the run and finalized on normal/error flow completion;
+shutdown waits at most 30 seconds for collection. Missing metadata/prices or collection failures
+produce incomplete coverage and never change scheduling. A forced process kill may leave only
+the ledger/latest partial checkpoint. Collect the report files with workflow logs. Exact billed
+cost can later be reconciled using AWS CUR/Split Cost Allocation Data and the saved resource IDs.

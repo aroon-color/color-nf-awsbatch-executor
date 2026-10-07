@@ -21,6 +21,8 @@ class TieredBatchTaskHandler extends AwsBatchTaskHandler {
     private final TieredRetryPolicy.Tier tier
     private final String selectedQueue
     private JobDetail observedJob
+    BatchFailureClassifier.Failure reportedFailure
+    TieredRetryPolicy.Tier getReportedTier() { tier }
     private boolean failureRecorded
 
     TieredBatchTaskHandler(TaskRun task, TieredBatchExecutor executor, TaskRetryStateStore retryStates, String taskKey, TieredRetryPolicy.Tier tier, String queue) {
@@ -76,6 +78,7 @@ class TieredBatchTaskHandler extends AwsBatchTaskHandler {
             BatchFailureClassifier.classify(observedJob, tier == TieredRetryPolicy.Tier.SPOT)
         if (classification == BatchFailureClassifier.Failure.ORDINARY)
             classification = BatchFailureClassifier.classify(observedJob, tier == TieredRetryPolicy.Tier.SPOT, failureDiagnostics())
+        reportedFailure = classification
         def state = retryStates.failed(taskKey, getJobId(), tier, classification)
         log.info "[tiered-awsbatch] task=${taskKey}; job=${getJobId()}; classification=${classification}; interruptions=${state.interruptions}; infrastructureFailures=${state.infrastructureFailures}; ordinaryFailures=${state.ordinaryFailures}; reason=${observedJob?.statusReason()}"
         if (state.terminal) {
