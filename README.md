@@ -1,6 +1,6 @@
-# nf-tiered-batch
+# color-nf-awsbatch-executor
 
-This repository builds the Nextflow plugin `nf-tiered-awsbatch`.
+This repository builds the Nextflow plugin `color-nf-awsbatch-executor`.
 
 ## Summary
 
@@ -36,7 +36,7 @@ installed `nf-amazon` plugin through its declared plugin dependency.
 ```groovy
 plugins {
     id 'nf-amazon@3.9.1'
-    id 'nf-tiered-awsbatch@0.3.0'
+    id 'color-nf-awsbatch-executor@0.3.0'
 }
 
 process {

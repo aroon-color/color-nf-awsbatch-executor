@@ -66,7 +66,7 @@ tasks.named('compileValidationGroovy') { dependsOn 'unpackAmazon', 'extensionPoi
 tasks.register('installValidationPlugin', Copy) {
     dependsOn 'validationClasses', 'installPlugin'
     def home = System.getenv('NXF_HOME') ?: layout.buildDirectory.dir('validation-home').get().asFile.path
-    into "${home}/plugins/nf-tiered-awsbatch-${project.version}/classes"
+    into "${home}/plugins/color-nf-awsbatch-executor-${project.version}/classes"
     from sourceSets.validation.output
     doLast {
         def index = new File(destinationDir, 'META-INF/extensions.idx')
