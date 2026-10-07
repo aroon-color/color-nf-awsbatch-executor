@@ -4,11 +4,14 @@ import com.color.nextflow.tieredbatch.*
 import nextflow.cloud.aws.batch.AwsBatchExecutor
 import nextflow.cloud.aws.batch.AwsBatchProxy
 import nextflow.processor.TaskRun
+import nextflow.processor.TaskHandler
+import nextflow.cloud.aws.batch.AwsBatchTaskHandler
+import software.amazon.awssdk.services.batch.model.SubmitJobRequest
 import nextflow.util.ServiceName
 
 /** Test-only replacement of the external AWS boundary; never packaged with the production plugin. */
-@ServiceName('tiered-awsbatch-validation')
-class ValidationExecutor extends TieredBatchExecutor {
+@ServiceName('awsbatch-validation')
+class ValidationAwsExecutor extends AwsBatchExecutor {
     private final FakeBatch api = new FakeBatch()
 
     @Override
@@ -32,7 +35,20 @@ class ValidationExecutor extends TieredBatchExecutor {
     }
 
     @Override
-    protected TieredBatchTaskHandler newTaskHandler(TaskRun task, String key, TieredRetryPolicy.Tier tier, String queue) {
-        return new ValidationHandler(task, this, retryStates, key, tier, queue, api)
+    TaskHandler createTaskHandler(TaskRun task) {
+        return new FixtureHandler(task, this, api)
+    }
+
+    private static class FixtureHandler extends AwsBatchTaskHandler {
+        private final FakeBatch api
+        FixtureHandler(TaskRun task, AwsBatchExecutor executor, FakeBatch api) {
+            super(task, executor)
+            this.api = api
+        }
+        @Override protected SubmitJobRequest newSubmitRequest(TaskRun task) {
+            def request = super.newSubmitRequest(task)
+            api.bind(request.jobName(), task)
+            return request
+        }
     }
 }

@@ -1,6 +1,6 @@
 # Compatibility and validation record
 
-Validated locally on 2026-10-06 with Nextflow **26.04.1**, nf-amazon **3.9.1**,
+Validated locally on 2026-10-07 with Nextflow **26.04.1**, nf-amazon **3.9.1**,
 Java **21.0.1**, Gradle **8.14**, and the Nextflow Gradle plugin **1.0.0-beta.15**.
 These versions are the supported baseline.
 
@@ -10,7 +10,7 @@ Production subclasses AwsBatchExecutor and AwsBatchTaskHandler, retaining upstre
 job definitions, staging, cancellation, polling, API throttling, and resources.
 Protected request creation, description, completion, and trace hooks support the
 policy. The actual Nextflow runtime loaded the installed executor and its pinned
-nf-amazon dependency. Production archives exclude the separate test-only backend.
+nf-amazon dependency. Production archives exclude the test-only backend; verification overlays it only into an isolated plugin home.
 
 Core retry copies get new task IDs but preserve process name and task index, which
 form the session-scoped logical identity. State is released at shutdown. Core
@@ -63,6 +63,23 @@ The destination has a 2048-vCPU ceiling and is also used by leaders.
 IAM policy simulation confirmed both existing leader instance roles allow
 batch:DescribeJobQueues and batch:DescribeComputeEnvironments.
 
+## Infrastructure retry update (0.2.0)
+
+The integration run `integration-test-V2026-10-07-14-19-03` showed AWS CLI S3
+`download failed` diagnostics containing `ConnectionResetError(104, 'Connection reset
+by peer')`, while Batch reported only `Essential container in task exited`. These
+failures previously consumed the application allowance. Version 0.2.0 recognizes
+such transient staging failures from bounded diagnostic tails and accounts for them
+separately. Three infrastructure failures trigger the final on-demand execution;
+three Spot host interruptions still trigger it independently. The core retry ceiling
+must include both thresholds and the application allowance (default 8).
+
+Regression scenarios cover stage-in, stage-out with a successful application exit
+file but failed wrapper/container, mixed failure budgets, final infrastructure failure,
+and permanent AccessDenied failures. Both CloudWatch strings and staged diagnostic
+paths are exercised, including errors beyond the first 64 KiB of a worker log.
+No clinical sample identifiers or private logs are included in the fixtures.
+
 ## External validation still required
 
 No AWS jobs, queue changes, plugin registry publication, or deployment were performed. Before enabling,
@@ -77,10 +94,17 @@ all three bundled plugins, the generated AWS executor/enablement, and actual
 executor discovery (using disabled configuration to stop before any AWS API).
 The image compiles portable bytecode in a native JDK stage and copies no test plugin.
 The version-check step replaces self-update, which was observed to install 26.04.6
-instead of the pinned release. Reproduce the offline check by running
-pipeline_nextflow_leader/tests/smoke_tiered_executor.sh inside the image with Bash.
+instead of the pinned release. The former Color smoke script was removed; plugin verification remains standalone.
 The standalone retry matrix also passed with NXF_OFFLINE=true and its preinstalled
-nf-amazon dependency. The Linux CI job still needs its normal CI execution. V1 rejects Fusion, arrays, Fargate,
+nf-amazon dependency. The original standalone Linux CI verification passed. V1 rejects Fusion, arrays, Fargate,
 pre-existing job definitions, and multi-container/multi-node overrides. New resumed
 launches reset unfinished-task budgets. Host EC2 termination reasons on verified
 Spot-only queues are evidence, not independent proof of an EC2 reclaim notification.
+
+Reporting validation additionally covers deduplicated attempt snapshots, three interruptions vs
+two Spot retries, distinct shared hosts, memory/CPU allocation, unknown prices, per-host/task
+cost sums, failed workflow summaries, zero incremental cost on cached resume, and upstream AWS
+Batch reporting without tiered scheduling. EC2/ECS/pricing SDK request tests use deterministic
+external responses; real Nextflow fixtures use explicit one-hour attempts and host/rate metadata.
+The production package includes only the Pricing SDK module and resolves shared SDK classes from
+nf-amazon, avoiding duplicate classloaders. AWS account billing reconciliation is not performed.

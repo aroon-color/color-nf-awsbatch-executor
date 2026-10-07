@@ -2,7 +2,7 @@ plugins {
     id 'io.nextflow.nextflow-plugin' version '1.0.0-beta.15'
 }
 
-version = '0.1.0'
+version = '0.3.0'
 
 nextflowPlugin {
     nextflowVersion = '26.04.1'
@@ -10,7 +10,7 @@ nextflowPlugin {
     description = 'Per-task AWS Batch Spot interruption retries with a final on-demand attempt'
     className = 'com.color.nextflow.tieredbatch.TieredBatchPlugin'
     requirePlugins = ['nf-amazon@3.9.1']
-    extensionPoints = ['com.color.nextflow.tieredbatch.TieredBatchExecutor', 'com.color.nextflow.tieredbatch.TieredBatchConfig']
+    extensionPoints = ['com.color.nextflow.tieredbatch.TieredBatchExecutor', 'com.color.nextflow.tieredbatch.TieredBatchConfig', 'com.color.nextflow.tieredbatch.BatchReportingFactory']
 }
 
 def amazonArchive = layout.buildDirectory.file('upstream/nf-amazon-3.9.1.zip')
@@ -40,6 +40,7 @@ tasks.register('unpackAmazon', Sync) {
     into amazonDirectory
 }
 dependencies {
+    implementation('software.amazon.awssdk:pricing:2.44.3') { transitive = false }
     compileOnly files(amazonDirectory.map { it.dir('classes') })
     compileOnly fileTree(amazonDirectory.map { it.dir('lib') }) { include '*.jar' }
     testImplementation files(amazonDirectory.map { it.dir('classes') })
@@ -60,24 +61,20 @@ configurations {
     validationRuntimeOnly.extendsFrom testRuntimeOnly
 }
 tasks.named('compileValidationGroovy') { dependsOn 'unpackAmazon', 'extensionPoints', 'generateSpec' }
-tasks.register('installValidationPlugin', Sync) {
+// Overlay test-only classes in the isolated validation home. Production packaging
+// uses only sourceSets.main; this avoids registry resolution for a private fixture dependency.
+tasks.register('installValidationPlugin', Copy) {
     dependsOn 'validationClasses', 'installPlugin'
     def home = System.getenv('NXF_HOME') ?: layout.buildDirectory.dir('validation-home').get().asFile.path
-    into "${home}/plugins/nf-tiered-awsbatch-validation-0.1.0/classes"
+    into "${home}/plugins/nf-tiered-awsbatch-${project.version}/classes"
     from sourceSets.validation.output
     doLast {
-        def metadata = new File(destinationDir, 'META-INF')
-        metadata.mkdirs()
-        new File(metadata, 'MANIFEST.MF').text = '''Manifest-Version: 1.0
-Plugin-Id: nf-tiered-awsbatch-validation
-Plugin-Version: 0.1.0
-Plugin-Requires: >=26.04.1
-Plugin-Class: com.color.nextflow.tieredbatch.validation.ValidationPlugin
-Plugin-Dependencies: nf-tiered-awsbatch@0.1.0,nf-amazon@3.9.1
-Plugin-Provider: Color
-
-'''
-        new File(metadata, 'extensions.idx').text = 'com.color.nextflow.tieredbatch.validation.ValidationExecutor\n'
+        def index = new File(destinationDir, 'META-INF/extensions.idx')
+        def extension = 'com.color.nextflow.tieredbatch.validation.ValidationExecutor'
+        index.text = index.text.replace('com.color.nextflow.tieredbatch.BatchReportingFactory', 'com.color.nextflow.tieredbatch.validation.ValidationReportingFactory')
+        index.append('com.color.nextflow.tieredbatch.validation.ValidationAwsExecutor\n')
+        if (!index.readLines().contains(extension))
+            index.append("${extension}\n")
     }
 }
 

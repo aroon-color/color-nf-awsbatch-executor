@@ -26,14 +26,14 @@ class TaskRetryStateStore {
         if (!states.containsKey(taskKey)) {
             if (!policy.config.queueMappings.containsKey(originalQueue))
                 throw new ProcessUnrecoverableException("No on-demand mapping for Spot queue '${originalQueue}'")
-            states.put(taskKey, new TieredRetryPolicy.State(originalQueue, 0, 0, false))
+            states.put(taskKey, new TieredRetryPolicy.State(originalQueue, 0, 0, 0, false))
         }
         def state = states.get(taskKey)
         // Core validation errors (e.g. missing outputs) also consume ordinary retries.
-        int ordinaryFailures = Math.max(state.ordinaryFailures, attempt - 1 - state.interruptions)
+        int ordinaryFailures = Math.max(state.ordinaryFailures, attempt - 1 - state.interruptions - state.infrastructureFailures)
         if (state.terminal || ordinaryFailures > policy.config.ordinaryRetryAllowance)
             throw new ProcessUnrecoverableException("Tiered retry allowance exhausted for ${taskKey}")
-        state = new TieredRetryPolicy.State(state.spotQueue, state.interruptions, ordinaryFailures, false)
+        state = new TieredRetryPolicy.State(state.spotQueue, state.interruptions, state.infrastructureFailures, ordinaryFailures, false)
         states.put(taskKey, state)
         return state
     }

@@ -6,7 +6,8 @@ This repository builds the Nextflow plugin `nf-tiered-awsbatch`.
 
 Nextflow executor `tiered-awsbatch` extends `nf-amazon` and counts host interruption
 failures separately for each logical task. After three such failures on a Spot-only
-queue, it submits one final execution on the mapped on-demand-only queue. A failed
+queue, or after three recognized transient AWS infrastructure failures, it submits
+one final execution on the mapped on-demand-only queue. A failed
 final execution terminates the workflow, including failures detected by Nextflow
 after Batch succeeds (for example, missing outputs).
 
@@ -35,7 +36,7 @@ installed `nf-amazon` plugin through its declared plugin dependency.
 ```groovy
 plugins {
     id 'nf-amazon@3.9.1'
-    id 'nf-tiered-awsbatch@0.1.0'
+    id 'nf-tiered-awsbatch@0.3.0'
 }
 
 process {
@@ -43,13 +44,15 @@ process {
     container = 'ubuntu:24.04'
     queue = 'analysis-spot'
     errorStrategy = 'retry'
-    maxRetries = 5
+    maxRetries = 8
     maxErrors = -1
 }
 
 tieredAwsBatch {
     enabled = true
+    reporting = true
     interruptionThreshold = 3
+    infrastructureFailureThreshold = 3
     ordinaryRetryAllowance = 2
     queueMappings = ['analysis-spot': 'analysis-on-demand']
 }
@@ -68,7 +71,7 @@ memory/CPU, container image, roles, network, and volume requirements; no capacit
 permission guarantee is inferred from the queue being enabled.
 
 Use static `errorStrategy = 'retry'`, `maxErrors = -1`, and a core retry ceiling at
-least `interruptionThreshold + ordinaryRetryAllowance`. Incompatible per-process
+least `interruptionThreshold + infrastructureFailureThreshold + ordinaryRetryAllowance`. Incompatible per-process
 overrides fail clearly rather than silently defeating the policy. The final attempt
 receives task-level `errorStrategy = 'terminate'`; Nextflow 26.04.1 interprets zero
 maxRetries as one, so zero is not used as a retry guard.
@@ -79,6 +82,35 @@ produce more than three Spot submissions. Host EC2 termination reasons on verifi
 Spot-only queues are the classifier evidence, matching upstream AWS retry practice.
 This does not independently distinguish reclaim notifications from every other host
 termination. Codes 137/143 alone never trigger fallback.
+
+Transient infrastructure failures have a separate counter. Three recognized failures
+route the affected task to its final on-demand execution without consuming application
+retries or the Spot interruption counter. The default threshold is configurable with
+`infrastructureFailureThreshold`. Final on-demand failures remain terminal, including
+another infrastructure failure.
+
+Classification uses explicit AWS CLI S3 transfer failures plus transient evidence
+(connection resets, endpoint timeouts, throttling, or service errors). It also
+recognizes transient container image-pull and resource-initialization failures.
+Access-denied, missing-object, image authorization, and generic application errors
+are not infrastructure failures. Exit codes alone are insufficient. Worker diagnostics
+come from upstream CloudWatch output or the last 64 KiB of staged stderr/wrapper logs.
+Unavailable diagnostics retain the ordinary classification; no log heuristic can
+identify an infrastructure failure whose evidence was never persisted.
+
+For S3-backed runs, also configure upstream transfer retries so brief outages do not
+require a new task:
+
+```groovy
+aws.batch.maxTransferAttempts = 5
+aws.batch.delayBetweenAttempts = '30 sec'
+aws.batch.maxParallelTransfers = 2
+aws.batch.retryMode = 'standard'
+```
+
+These retries apply to worker staging. Nextflow leader-side `publishDir` failures,
+control-plane polling, and ambiguous SubmitJob outcomes are not reclassified by this
+policy; ambiguous submissions remain terminal to avoid duplicate jobs.
 
 ## Supported scope and resume
 
@@ -106,8 +138,8 @@ NEXTFLOW_BIN=/absolute/path/to/nextflow ./scripts/verify.sh
 NEXTFLOW_BIN=/absolute/path/to/nextflow ./scripts/verify-extraction.sh
 ```
 
-Verification loads a separate test-only plugin that replaces the external AWS
-boundary, runs real Nextflow scheduling/retries/output validation, and asserts queue
+Verification overlays test-only executor classes into an isolated plugin home to
+replace the external AWS boundary, runs real Nextflow scheduling/retries/output validation, and asserts queue
 sequences, tags, resources, final failures, isolation, and cache behavior. Production
 archives never contain this fixture or its executor. SDK submission tests use a
 local HTTP server to prove that a retrying client sends SubmitJob only once.
@@ -135,3 +167,42 @@ for future launches; do not migrate active jobs as part of rollback.
 Original Color code retains its internal proprietary rights. See LICENSE and NOTICE
 for third-party provenance. Public source availability does not grant an open-source redistribution license.
 No plugin registry publication is included.
+
+## Usage and compute cost reporting
+
+Set `tieredAwsBatch.reporting = true` to write reports in the launch working directory.
+Reporting also works with `process.executor = 'awsbatch'` and `tieredAwsBatch.enabled = false`;
+loading this plugin does not change the upstream executor's retry policy. Reporting is opt-in
+and independent of queue validation. The plugin contains no Slack or Color dependencies.
+
+`tiered-batch-attempts.jsonl` is an append-only stream of upsert snapshots. Deduplicate by
+`launchId`, `jobId`, and `backendAttempt` when consuming it. It records logical process/index,
+Nextflow attempt, Batch job/attempt, queue/region, ECS and EC2 identity, market, timestamps,
+requested resources, failure classification, observed rate, and estimated allocated cost.
+It contains no command, environment, output, or failure diagnostic content.
+`tiered-batch-summary.json` aggregates attempts, interruptions, actual Spot resubmissions,
+infrastructure/application retries, on-demand executions/fallbacks, distinct hosts, tier runtimes,
+and estimated compute cost per logical task, EC2 host, and launch. Three interruptions normally
+mean two Spot resubmissions and one on-demand fallback. Built-in Batch retries are counted too.
+
+Each attempt costs runtime hours × observed Linux hourly rate ×
+`min(1, mean(requested vCPU / host vCPU, requested memory / host memory))`.
+Spot uses the effective AZ price at attempt start; on-demand uses the current public Linux
+shared-tenancy rate. This is an allocation estimate, not billed EC2 cost. It excludes idle host
+capacity, leader, storage, network, discounts and billing minimums. It does not charge each small
+task an entire shared host. The JSON identifies priced/unidentified attempts; unavailable prices
+remain null rather than zero. Cached tasks spend zero new compute. A resume gets a new launch ID
+and retains the Nextflow session ID for later reconciliation; sum archived launches for cumulative
+workflow estimates. Do not merge them by session ID alone.
+
+The leader role needs these read-only permissions (in addition to normal executor permissions):
+`batch:DescribeJobs`, `ecs:DescribeContainerInstances`, `ec2:DescribeInstances`,
+`ec2:DescribeInstanceTypes`, `ec2:DescribeSpotPriceHistory`, and `pricing:GetProducts`.
+Pricing requests use us-east-1 while compute metadata uses `aws.region` and the same Nextflow
+credential provider. Metadata is captured at task start to preserve identities before interruption,
+with another snapshot at completion. Read requests have five-second timeouts and run on a separate
+worker. Reports are checkpointed during the run and finalized on normal/error flow completion;
+shutdown waits at most 30 seconds for collection. Missing metadata/prices or collection failures
+produce incomplete coverage and never change scheduling. A forced process kill may leave only
+the ledger/latest partial checkpoint. Collect the report files with workflow logs. Exact billed
+cost can later be reconciled using AWS CUR/Split Cost Allocation Data and the saved resource IDs.
