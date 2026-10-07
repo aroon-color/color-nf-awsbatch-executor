@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 plugin_root=$(cd "$(dirname "$0")/.." && pwd)
-scratch=$(mktemp -d "${TMPDIR:-/tmp}/nf-tiered-awsbatch-extraction.XXXXXX")
+scratch=$(mktemp -d "${TMPDIR:-/tmp}/color-nf-awsbatch-executor-extraction.XXXXXX")
 trap 'rm -rf "$scratch"' EXIT
 mkdir -p "$scratch/plugin" "$plugin_root/build/extraction"
 tar -C "$plugin_root" --exclude='./.git' --exclude='./build' --exclude='./.gradle' -cf - . | tar -C "$scratch/plugin" -xf -
